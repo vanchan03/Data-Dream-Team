@@ -1,0 +1,108 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(tidyverse)
+library(data.table)
+
+eoc <- fread("checkpoints_eoc.csv")
+pulse <- fread("checkpoints_pulse.csv")
+items <- fread("items.csv")
+media <- fread("media_views.csv")
+pageviews <- fread("page_views.csv")
+responses <- fread("responses.csv")
+```
+```{r}
+eoc <- distinct(eoc)
+eoc$student_id <- as.factor(eoc$student_id)
+eoc <- eoc %>% 
+  filter(book != "High School / Advanced Statistics and Data Science I (ABC)")
+
+
+eoc_na <- eoc %>%
+  select(student_id, chapter_number, class_id, EOC) %>%
+  group_by(student_id, chapter_number, class_id) %>%
+  filter(is.na(EOC))
+
+eoc_not_na <- eoc %>%
+  select(student_id, chapter_number, class_id, EOC, n_attempt) %>%
+  group_by(student_id, chapter_number, class_id) %>%
+  filter(!is.na(EOC))
+  
+eoc_not_na <- distinct(eoc_not_na)
+
+eoc_not_na$chapter_number <- as.factor(eoc_not_na$chapter_number)
+eoc_not_na$class_id <- as.factor(eoc_not_na$class_id)
+```
+```{r}
+
+pulse <- pulse %>%
+  distinct() %>%
+  mutate(student_id = as.factor(student_id)) %>%
+  filter(book != "High School / Advanced Statistics and Data Science I (ABC)")
+
+
+pulse_na <- pulse %>%
+  select(student_id, chapter_number, class_id, construct, response) %>%
+  group_by(student_id, chapter_number, class_id) %>%
+  filter(is.na(response))
+
+pulse_not_na <- pulse %>%
+  select(student_id, chapter_number, class_id, construct, response) %>%
+  group_by(student_id, chapter_number, class_id) %>%
+  filter(!is.na(response)) %>%
+  distinct() %>%
+  mutate(construct = as.factor(construct))
+
+
+pulse_not_na <- pulse_not_na %>%
+  arrange(student_id, chapter_number) %>%
+  pivot_wider(
+    names_from = construct, 
+    values_from = response,
+    values_fn = list(response = mean) 
+  )
+
+```
+```{r}
+eoc_not_na
+pulse_not_na$chapter_number <- as.factor(pulse_not_na$chapter_number)
+eoc_pulse <- inner_join(eoc_not_na, pulse_not_na, by = c("student_id", "chapter_number", "class_id"))
+
+
+colnames(eoc_pulse)[c(8,9)] <- c("Intrinsic", "Utility")
+eoc_pulse <- na.omit(eoc_pulse)
+```
+```{r}
+unique(items$book)
+unique(items$chapter)
+
+sum(is.na(items$lrn_type))
+
+
+items_clean <- items %>%
+  select(class_id, chapter_number, lrn_type) %>%
+  group_by(class_id, chapter_number, lrn_type) %>%
+  filter(!is.na(lrn_type)) %>%
+  count(lrn_type) %>%
+  pivot_wider(
+    names_from = lrn_type, 
+    values_from = n)
+  
+
+eoc_pulse_avg <- eoc_pulse %>%
+  group_by(chapter_number, class_id) %>%
+  summarize(avg_eoc = mean(EOC, na.rm = TRUE), avg_n_at = mean(n_attempt, na.rm = TRUE), avg_cost = mean(Cost, na.rm = TRUE), avg_exp = mean(Expectancy, na.rm = TRUE), avg_int = mean(Intrinsic, na.rm = TRUE), avg_util = mean(Utility, na.rm = TRUE), avg_util = mean(Utility, na.rm = TRUE))
+```
+```{r}
+items_clean$chapter_number <- as.factor(items_clean$chapter_number)
+
+eoc_pulse_avg_items <- inner_join(eoc_pulse_avg, items_clean, by = c("chapter_number", "class_id")) %>%
+  arrange(class_id, chapter_number) %>%
+  mutate_all(~ replace_na(., 0))
+
+
+#write.csv(eoc_pulse, "eoc_pulse.csv", row.names = FALSE)
+eoc_pulse_avg_items
+```
