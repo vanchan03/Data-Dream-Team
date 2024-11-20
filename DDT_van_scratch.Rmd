@@ -1,0 +1,188 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+eoc <- read.csv("checkpoints_eoc.csv")
+pulse <- read.csv("checkpoints_pulse.csv")
+items <- read.csv("items.csv")
+media <- read.csv("media_views.csv")
+pageviews <- read.csv("page_views.csv")
+responses <- read.csv("responses.csv")
+
+pageviews
+test <- eoc %>% 
+  mutate(eoc_adj = n_correct / n_possible) 
+  
+
+
+```
+```{r}
+eoc <- distinct(eoc)
+eoc$student_id <- as.factor(eoc$student_id)
+eoc <- eoc %>% 
+  filter(book != "High School / Advanced Statistics and Data Science I (ABC)")
+
+
+eoc_na <- eoc %>%
+  select(student_id, chapter_number, class_id, EOC) %>%
+  group_by(student_id, chapter_number, class_id) %>%
+  filter(is.na(EOC))
+
+eoc_not_na <- eoc %>%
+  select(student_id, chapter_number, class_id, EOC, n_attempt) %>%
+  group_by(student_id, chapter_number, class_id) %>%
+  filter(!is.na(EOC))
+  
+eoc_not_na <- distinct(eoc_not_na)
+
+eoc_not_na$chapter_number <- as.factor(eoc_not_na$chapter_number)
+eoc_not_na$class_id <- as.factor(eoc_not_na$class_id)
+```
+```{r}
+
+pulse <- distinct(pulse)
+pulse$student_id <- as.factor(pulse$student_id)
+pulse <- pulse %>%
+  filter(book != "High School / Advanced Statistics and Data Science I (ABC)")
+
+pulse_na <- pulse %>%
+  select(student_id, chapter_number, class_id, construct, response) %>%
+  group_by(student_id, chapter_number, class_id) %>%
+  filter(is.na(response))
+
+pulse_not_na <- pulse %>%
+  select(student_id, chapter_number, class_id, construct, response) %>%
+  group_by(student_id, chapter_number, class_id) %>%
+  filter(!is.na(response))
+
+
+pulse_not_na$construct <- as.factor(pulse_not_na$construct)
+  
+pulse_not_na <- distinct(pulse_not_na)
+
+pulse_not_na <- pulse_not_na %>%
+  arrange(student_id, chapter_number) %>%
+  pivot_wider(
+    names_from = construct, 
+    values_from = response)
+
+pulse_not_na$chapter_number <- as.factor(pulse_not_na$chapter_number)
+pulse_not_na$class_id <- as.factor(pulse_not_na$class_id)
+```
+```{r}
+eoc_not_na
+pulse_not_na
+eoc_pulse <- inner_join(eoc_not_na, pulse_not_na, by = c("student_id", "chapter_number", "class_id"))
+
+
+colnames(eoc_pulse)[c(8,9)] <- c("Intrinsic", "Utility")
+eoc_pulse <- na.omit(eoc_pulse)
+```
+```{r}
+library(randomForest)
+rfm1 <- randomForest(EOC~ chapter_number + n_attempt + Cost + Expectancy + Intrinsic + Utility,data=eoc_pulse,mtry=4,importance=TRUE)
+rfm1
+
+pred.train <- predict(rfm1, eoc_pulse[c(2,5:9)])
+mae <- mean(abs(pred.train - eoc_pulse$EOC))
+correlation <- cor(pred.train, eoc_pulse$EOC)
+```
+```{r}
+lm1 <- lm(EOC~ chapter_number + n_attempt + Cost + Expectancy + Intrinsic + Utility,data=eoc_pulse)
+summary(lm1)
+```
+
+```{r}
+media %>%
+  mutate_at(vars(11:12), as.POSIXct)
+  
+```
+```{r}
+sum(pageviews$tried_again_clicks != 0) / dim(pageviews)[1]
+pageviews
+```
+```{r}
+unique(items$book)
+unique(items$chapter)
+
+sum(is.na(items$lrn_type))
+
+
+items_clean <- items %>%
+  select(class_id, chapter_number, lrn_type) %>%
+  group_by(class_id, chapter_number, lrn_type) %>%
+  filter(!is.na(lrn_type)) %>%
+  count(lrn_type) %>%
+  pivot_wider(
+    names_from = lrn_type, 
+    values_from = n)
+  
+
+eoc_pulse_avg <- eoc_pulse %>%
+  group_by(chapter_number, class_id) %>%
+  summarize(avg_eoc = mean(EOC, na.rm = TRUE), avg_n_at = mean(n_attempt, na.rm = TRUE), avg_cost = mean(Cost, na.rm = TRUE), avg_exp = mean(Expectancy, na.rm = TRUE), avg_int = mean(Intrinsic, na.rm = TRUE), avg_util = mean(Utility, na.rm = TRUE), avg_util = mean(Utility, na.rm = TRUE))
+
+```
+```{r}
+items_clean
+unique(items_clean$class_id)
+
+items_clean$chapter_number <- as.factor(items_clean$chapter_number)
+
+eoc_pulse_avg_items <- inner_join(eoc_pulse_avg, items_clean, by = c("chapter_number", "class_id")) %>%
+  arrange(class_id, chapter_number) %>%
+  mutate_all(~ replace_na(., 0))
+
+```
+```{r}
+rfm1 <- randomForest(EOC~ chapter_number + Cost + Expectancy + Intrinsic + Utility,data=eoc_pulse,mtry=4,importance=TRUE)
+rfm1
+varImpPlot(rfm1)
+
+pred.train <- predict(rfm1, eoc_pulse[c(2,5:9)])
+mae <- mean(abs(pred.train - eoc_pulse$EOC))
+correlation <- cor(pred.train, eoc_pulse$EOC)
+pred_actual <- data.frame(pred.train, eoc_pulse$EOC)
+library(iml)
+
+Y <- eoc_pulse$EOC
+X <- eoc_pulse[c(2,4:9)]
+predictor <- Predictor$new(rfm1, data = X, y = Y)
+
+pdp_cost <- FeatureEffect$new(predictor, feature = "Cost", grid.size = 10, method = "pdp")
+pdp_cost$plot()
+
+pdp_exp <- FeatureEffect$new(predictor, feature = "Expectancy", grid.size = 10, method = "pdp")
+pdp_exp$plot()
+
+pdp_intr <- FeatureEffect$new(predictor, feature = "Intrinsic", grid.size = 10, method = "pdp")
+pdp_intr$plot()
+
+pdp_util <- FeatureEffect$new(predictor, feature = "Utility", grid.size = 10, method = "pdp")
+pdp_util$plot()
+
+pdp_chp <- FeatureEffect$new(predictor, feature = "chapter_number", grid.size = 10, method = "pdp")
+pdp_chp$plot()
+```
+```{r}
+pred.full <- predict(rfm1, eoc_pulse[c(2,5, 6:9)])
+mean((pred.full - eoc_pulse$EOC)^2)
+
+pred_actual <- data.frame(pred.full, eoc_pulse$EOC)
+
+
+
+ggplot(data = pred_actual, aes(x = 1:length(pred_actual$eoc_pulse.EOC))) +
+  geom_smooth(aes(y = abs(pred_actual$eoc_pulse.EOC - pred_actual$pred.full)), method = "loess", color = "cornflowerblue") +
+  labs(x = "Students", y = "EOC", title = "Error: Absolute Actual - Predicted EOC") +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+```
+
+
